@@ -52,7 +52,7 @@ Source of the population data: https://www.naturalearthdata.com/downloads/10m-cu
 ```{r}
 path_population_shp <- here("geo_assig2/map_1/populated_places", "ne_10m_populated_places.shp")
 gmsf_population <- st_read(path_population_shp)
-View(gmsf_population)
+head(gmsf_population)
 colnames(gmsf_population)
 ```
 
@@ -130,7 +130,14 @@ colnames(gmsf_population_by_countries)
 ```
 
 ```{r}
-rows_with_na <- gmsf_population_by_countries %>% filter(is.na(POP_EST))
+gmsf_population_by_countries_sel <- gmsf_population_by_countries %>%
+  select(SOVEREIGNT, ADMIN, ISO_A2, CONTINENT, POP_EST, POP_YEAR, geometry)
+View(gmsf_population_by_countries_sel)
+rm(gmsf_population_by_countries)
+```
+
+```{r}
+rows_with_na <- gmsf_population_by_countries_sel %>% filter(is.na(POP_EST))
 head(rows_with_na)
 ```
 
@@ -141,28 +148,270 @@ There are no missing values for the population field.
 Source of the ports data: https://www.naturalearthdata.com/downloads/10m-cultural-vectors/ports/
 
 ```{r}
-path_population_shp <- here("map_1/populated_places", "ne_10m_populated_places.shp")
-gmsf_population <- st_read(path_population_shp)
-View(gmsf_population)
+path_ports_shp <- here("geo_assig2/map_1/ports", "ne_10m_ports.shp")
+gmsf_ports <- st_read(path_ports_shp)
+View(gmsf_ports)
+colnames(gmsf_ports)
+```
+
+Select only the values that may be useful:
+
+```{r}
+gmsf_ports_sel <- gmsf_ports %>% select(featurecla, name, ne_id, geometry)
+View(gmsf_ports_sel)
+rm(gmsf_ports)
 ```
 
 ## 1.5. Airports data
 
 Source of the airports data: https://www.naturalearthdata.com/downloads/10m-cultural-vectors/airports/
 
+```{r}
+path_airports_shp <- here("geo_assig2/map_1/airports", "ne_10m_airports.shp")
+gmsf_airports <- st_read(path_airports_shp)
+View(gmsf_airports)
+colnames(gmsf_airports)
+```
+
+Select only the features that may be useful:
+
+```{r}
+gmsf_airports_sel <- gmsf_airports %>% select(featurecla, type, name, abbrev, ne_id, geometry)
+View(gmsf_airports_sel)
+rm(gmsf_airports)
+```
+
 # 2. Maps
 
 ## 2.1. Map of total population by country
 
 ```{r}
-# Plotting it with ggplot:
-ggplot(gmsf_population_by_countries) +
-  geom_sf(aes(fill=POP_EST)) +
-  scale_fill_distiller(palette = 'Spectral')
+ggplot(gmsf_population_by_countries_sel) +
+  geom_sf(aes(fill=POP_EST)) +  # Fill countries by population estimates
+  scale_fill_distiller(palette = "Spectral",  # Setting color legend
+                       name = "Population Estimate") +
+  labs(title = "World Population by Country",
+       subtitle = "Population estimates across countries",
+       caption = "Data Source: Natural Earth (2025)",
+       )
 ```
+
+Note, however, that the population estimates correspond to different years, so the current situation may differ slightly.
 
 ## 2.2. Histogram of country population distribution by continent
 
+```{r}
+ggplot(gmsf_population_by_countries_sel, aes(POP_EST)) +
+  geom_histogram(bins = 50, fill = "purple", color = "white") +
+  facet_wrap(~ CONTINENT, scales = "free_x") + # We use facet_wrap to create a figure with several histograms grouped by continent
+  labs(title = "Population Histogram by Continent (different population scale)",
+       x = "Population Estimate",
+       y = "Frequency")
+```
 
+```{r}
+ggplot(gmsf_population_by_countries_sel, aes(POP_EST)) +
+  geom_histogram(bins = 50, fill = "purple", color = "white") +
+  facet_wrap(~ CONTINENT, scales = "fixed") + # We use facet_wrap to create a figure with several histograms grouped by continent
+  labs(title = "Population Histogram by Continent (same population scale)",
+       x = "Population Estimate",
+       y = "Frequency")
+```
 
 ## 2.3. Histogram of (country-level) average distances between locations and ports or airports by continent
+
+For creating these histograms, we need to:
+1. First, compute the distances of each location to all the airports and ports within the same country (if computationally feasible, if not limit to top 20 locations by country).
+2. Second, keep just the shortest distance of each location within a country to an airport and a port.
+3. Third, compute the average distances (country-level) of each location to an airport and a port.
+4. Fourth, plot the histogram with the average distances by continent.
+
+### Preliminary cleaning
+
+#### Removing military-type airports
+
+First, we filter out those airports which only have a military purpose:
+
+```{r}
+unique(gmsf_airports_sel$type)
+```
+
+We remove those airports which just have a military or spaceport purpose, since they won't be an indicator for how well connected a location is.
+
+```{r}
+gmsf_airports_slice <- gmsf_airports_sel %>%
+  filter(!(type %in% c("military", "military mid", "military major", "spaceport")))
+unique(gmsf_airports_slice$type)
+```
+
+#### Combining airports and ports data frames
+
+Now, we combine the ports and airports data frame (keeping a variable, `featurecla`, that tags the type of infrastructure) to reduce the number of operations in subsequent steps.
+
+```{r}
+# Concatenate data frames vertically, assigning null values whenever
+# columns do not match
+gmsf_ports_and_airports <- bind_rows(gmsf_airports_sel, gmsf_ports_sel)
+str(gmsf_ports_and_airports)
+View(gmsf_ports_and_airports)
+```
+
+Below, we rename the "type" column to clarify coincidences with the `world` dataset:
+
+```{r}
+gmsf_ports_and_airports <- gmsf_ports_and_airports %>% 
+  rename(airport_type = type)
+```
+
+#### Determining the country of a port/airport
+
+Now, we need to determine the country where an airport or a port is located.
+- We perform a spatial join which combines attributes from `gmsf_world_sel` to the x object (`gmsf_ports_and_airports`).
+- The `st_is_within_distance` function checks whether features in `x` are within a specified distance from features in `y`.
+- We try to associate each port and airport with a country by checking if it lies within 20 meters of a country's border (we set a margin to consider inaccuracies in the borders).
+- Both data frames have the geometry defined with the Geodetic CRS "WGS 84".
+
+```{r}
+country_infrastructures <- st_join(
+  x = gmsf_ports_and_airports,
+  y = gmsf_world_sel,
+  join = st_is_within_distance,
+  dist = units::set_units(20, "m") # We are setting the distance in meters
+)
+head(country_infrastructures)
+dim(country_infrastructures)
+```
+
+To check how the operation has been performed, below we count the proportion of missing values in the country name (`name_long`):
+
+```{r}
+missing_count <- sum(is.na(country_infrastructures$name_long))
+print(missing_count / dim(country_infrastructures)[1])
+```
+
+With a distance margin of 20 meters, there are approximately 20.82% of missing values. 
+- This indicates that for about 20% of the points, no corresponding country polygon was found within the specified distance of 20 meters.
+- However, after trying with higher-resolution maps, the resolution of the `world` doesn't seem to be the main problem, since higher-resolution polygons yield a similar result.
+- Also, note that just increasing the distance endlessly may introduce other problems, such as the fact that an airport or a port is assigned to two different countries. The number of airports and ports (1974) should be equal to the length of the data frame above (for simplicity).
+- To that end, an alternative method is shown below, where we use `[st_nearest_feature](https://r-spatial.github.io/sf/reference/st_nearest_feature.html)` instead of `st_is_within_distance`.
+
+```{r}
+country_infrastructures_2 <- st_join(
+  x = gmsf_ports_and_airports,
+  y = gmsf_world_sel,
+  join = st_nearest_feature,
+)
+head(country_infrastructures_2)
+dim(country_infrastructures_2)
+missing_count <- sum(is.na(country_infrastructures_2$name_long))
+print(missing_count / dim(country_infrastructures_2)[1])
+```
+
+The `st_nearest_feature` method ensures that each point is associated with the closest country polygon, which can be particularly useful in cases where points are expected to have a corresponding country but fall outside typical boundary definitions.
+
+With this method, we have reduced the proportion of missing country values to 0%.
+
+#### Merging the population data by location with the world data (remove)
+
+We want to merge the data to ensure that countries have the same name when we combine the data frames.
+
+```{r}
+poploc_world_join <- st_join(
+  x = gmsf_population_sel,
+  y = gmsf_world_sel,
+  join = st_within
+)
+View(poploc_world_join)
+```
+
+#### Renaming the column of the name of the country of the locations data frame
+
+```{r}
+gmsf_population_sel <- gmsf_population_sel %>% 
+  rename(name_long = SOV0NAME)
+```
+
+### Step 1: Compute distances of (populated) locations to infrastructures in the same country
+
+```{r}
+# Group infrastructures by country, converting geometries 
+# into a list of geometries whenever there is more than one
+# point for the same country
+infrastructures_by_country <- country_infrastructures_2 %>%
+  group_by(name_long) %>%
+  nest()
+
+# Group locations by country
+locations_by_country <- gmsf_population_sel %>%
+  group_by(name_long) %>%
+  nest()
+```
+
+
+```{r}
+# Function to calculate distances between locations and 
+# infrastructures within the same country
+calculate_distances <- function(locations, infrastructures) {
+  # Compute the distance matrix between locations and infrastructures
+  dist_matrix <- st_distance(locations, infrastructures)
+  
+  # Convert the distance matrix to a data frame for easier manipulation
+  dist_df <- as.data.frame(as.table(dist_matrix))
+  
+  # Rename columns for clarity
+  colnames(dist_df) <- c("location_index", "infrastructure_index", "distance")
+  
+  # Add identifiers for locations and infrastructures based on their indices
+  dist_df <- dist_df %>%
+    mutate(
+      location_id = locations$location_id[location_index],
+      infrastructure_id = infrastructures$infrastructure_id[infrastructure_index]
+    ) %>%
+    select(location_id, infrastructure_id, distance)  # Select relevant columns
+  
+  return(dist_df)
+}
+```
+
+```{r}
+# Initialize an empty list to store distance data frames for each country
+distance_results <- list()
+
+# Identify common countries present in both datasets
+common_countries <- intersect(infrastructures_by_country$name_long, locations_by_country$name_long)
+
+# Iterate over each common country to calculate distances
+for (country in common_countries) {
+  # Extract infrastructures for the current country
+  country_infrastructures <- infrastructures_by_country %>%
+    filter(name_long == country) %>%
+    pull(data) %>%
+    .[[1]]
+  
+  # Extract locations for the current country
+  country_locations <- locations_by_country %>%
+    filter(name_long == country) %>%
+    pull(data) %>%
+    .[[1]]
+  
+  # Calculate distances between locations and infrastructures
+  country_distances <- calculate_distances(country_locations, country_infrastructures)
+  
+  # Append the result to the list with the country name as the key
+  distance_results[[country]] <- country_distances
+}
+
+# Combine all country-specific distance data frames into a single data frame
+all_distances <- bind_rows(distance_results, .id = "country")
+```
+
+```{r}
+head(all_distances)
+```
+
+### Step 2: Keep the shortest distance of each location with each type of infrastructure
+
+### Step 3: Compute average distances (country-level) of each location to each type of infrastructure
+
+### Step 4: Plotting histograms by type of infrastructure
+
