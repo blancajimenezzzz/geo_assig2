@@ -20,32 +20,133 @@ Combination with:
 - Population (point) data (do not use rasters!)
 - Ports, airports, etc.
 
+## 1.1. World dataset
+
 Loading the world dataset:
 
 ```{r}
 gmsf_world <- world
-head(gmsf_world)
+View(gmsf_world)
 ```
+
+We keep only the variables that interest us for this task:
+
+```{r}
+gmsf_world_sel <- gmsf_world %>% select(iso_a2, name_long, continent, type, pop, geom)
+View(gmsf_world_sel)
+rm(gmsf_world)
+```
+
+*Note*: just using the world dataset to produce a map of total population by country is not enough, as there are countries with missing values.
 
 ```{r}
 # Plotting it with ggplot:
-ggplot(gmsf_world) +
-  geom_sf()
-ggplot(gmsf_world) +
-  geom_sf(aes(fill=continent))
+ggplot(gmsf_world_sel) +
+  geom_sf(aes(fill=pop))
 ```
+
+## 1.2. Population data by location
 
 Source of the population data: https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-populated-places/
 
 ```{r}
-path_population_shp <- here("part_1/ne_50m_populated_places", "ne_50m_populated_places.shp")
+path_population_shp <- here("geo_assig2/map_1/populated_places", "ne_10m_populated_places.shp")
+gmsf_population <- st_read(path_population_shp)
+View(gmsf_population)
+colnames(gmsf_population)
+```
+
+Again, we only select those variables that may interest us:
+
+```{r}
+gmsf_population_sel <- gmsf_population %>% 
+  select(FEATURECLA, NAME, NAMEASCII, SOV0NAME, ADM0NAME, ISO_A2, POP_MAX, POP_MIN, geometry)
+View(gmsf_population_sel)
+rm(gmsf_population)
+```
+
+### Grouping population by country
+
+Now, we group the population data by country:
+
+```{r}
+gmsf_population_country <- gmsf_population_sel %>% 
+  group_by(SOV0NAME) %>% 
+  summarise(total_pop = sum(POP_MAX))
+head(gmsf_population_country)
+View(gmsf_population_country)
+```
+
+Note how the aggregate populations are far from being representative for many countries (because there are many locations missing)! For instance, China only has approx. 300 million people according to this dataset.
+
+### Merging with the `world` data
+
+Now, we merge the population data with the world data, by geometry:
+
+```{r}
+pop_world_join <- st_join(gmsf_population_sel, gmsf_world_sel, join = st_within)
+head(pop_world_join)
+```
+
+Aggregate the population by country:
+
+```{r}
+pop_by_country <- pop_world_join %>%
+  group_by(name_long) %>%
+  summarize(total_population = sum(POP_MAX, na.rm = TRUE))
+head(pop_by_country)
+View(pop_by_country)
+```
+
+Join the aggregated data back to the world dataset:
+
+```{r}
+world_pop <- left_join(
+  world,
+  st_drop_geometry(pop_by_country),
+  by = "name_long"
+  )
+```
+
+Plot results:
+
+```{r}
+ggplot(world_pop) +
+  geom_sf(aes(fill = total_population)) +
+  scale_fill_viridis_c(option = "spectral", na.value = "grey50") +
+  labs(fill = "Total Population") +
+  theme_minimal()
+```
+
+## 1.3. Population data by country
+
+Source of the population by country data: https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/
+
+```{r}
+path_population_countries_shp <- here("geo_assig2/map_1/population_by_countries", "ne_10m_admin_0_countries.shp")
+gmsf_population_by_countries <- st_read(path_population_countries_shp)
+View(gmsf_population_by_countries)
+colnames(gmsf_population_by_countries)
+```
+
+```{r}
+rows_with_na <- gmsf_population_by_countries %>% filter(is.na(POP_EST))
+head(rows_with_na)
+```
+
+There are no missing values for the population field.
+
+## 1.4. Ports data
+
+Source of the ports data: https://www.naturalearthdata.com/downloads/10m-cultural-vectors/ports/
+
+```{r}
+path_population_shp <- here("map_1/populated_places", "ne_10m_populated_places.shp")
 gmsf_population <- st_read(path_population_shp)
 View(gmsf_population)
 ```
 
-Source of the ports data: https://www.naturalearthdata.com/downloads/10m-cultural-vectors/ports/
-
-
+## 1.5. Airports data
 
 Source of the airports data: https://www.naturalearthdata.com/downloads/10m-cultural-vectors/airports/
 
@@ -53,154 +154,15 @@ Source of the airports data: https://www.naturalearthdata.com/downloads/10m-cult
 
 ## 2.1. Map of total population by country
 
-In this case, we can just use the population data of Natural Earth.
-
 ```{r}
-
+# Plotting it with ggplot:
+ggplot(gmsf_population_by_countries) +
+  geom_sf(aes(fill=POP_EST)) +
+  scale_fill_distiller(palette = 'Spectral')
 ```
 
 ## 2.2. Histogram of country population distribution by continent
+
+
+
 ## 2.3. Histogram of (country-level) average distances between locations and ports or airports by continent
-
-----
-
-Paper: "In harm's way? infrastructure investments and the persistence of coastal cities".
-
-
-Notes on the possible sources of data for figure 4 ("Road maps of Vietnam, 2000 and 2010"):
-- Replication package for paper 4: https://www.openicpsr.org/openicpsr/project/207641/version/V1/view. Useful information in:
-  - Raw data -> Boundaries (for constructing Vietnam's coastline as shown in the paper).
-  - The author says that they were constructed using Natural Earth Data and then cropping the shapefile to include only Vietnam's coastline.
-  - But their files don't include the boundaries of the whole Vietnam! So the replication package is not very useful.
-- Vietnam's country boundaries obtained from: https://gadm.org/download_country.html. Different shape files for different territorial administrative levels.
-- Vietnam's road network information (for 2015) obtained from: https://data.humdata.org/dataset/viet-nam-roads
-
-# 1. Relevant information of the paper for replicating the map
-
-1. Maps to be replicated: road network of Vietnam in 2000 and 2010.
-2. Need map of Vietnam.
-3. Need road networks by road type (if they are available). On how the author constructed Vietnam's road network:
-  - "I obtain road network data from the 2000 and 2010 editions of ITMB Publishing's detailed International Travel Maps of Vietnam, which show the location of freeways, dual carriageways, major, minor and other roads. 
-  - I geo-referenced each map and manually traced the location of each road category to obtain a GIS shapefile of the entire road network in each road category in 2000 and 2010, shown in Figure 3.""
-
-# 2. Importing packages and setting working directory
-
-```{r Packages}
-library(sf) # simple features' library
-library(spData) # library of spatial datasets
-library(tidyverse) # dplyr, ggplot, ...
-```
-
-```{r Working environment}
-setwd("/mnt/0E403953403942AF/Drive pablo.fdzalb/BSE - DSDM/2-Geospatial_DS_&_Economic_Spatial_Models/Assignments/Assignment_1/paper_4")
-```
-
-# 3. Importing and cleaning the data
-
-We need to read the data from 2 different sources: an Excel (for the dams) and a shape file (for the magisterial district boundaries).
-
-## 3.1. Vietnam's boundaries
-
-```{r Reading Vietnam's boundaries}
-sf_vietnam <- st_read(
-  "gadm41_VNM_shp/gadm41_VNM_0.shp"
-)
-```
-
-## 3.2. Road network
-
-```{r Reading Vietnam's road network}
-sf_vietnam_roads <- st_read(
-  "vnm_rdsl_2015_osm/vnm_rdsl_2015_OSM.shp"
-)
-```
-
-```{r Checking road types}
-str(sf_vietnam_roads)
-unique(sf_vietnam_roads$type)
-```
-
-The type of road is stored within the `type` column. Given that there are 28 unique types of roads (as they include crossings and linkks as separate types), below
-we simplify the classification by separating the types into either:
-1. "motorway" or "trunk" roads (assimilated to a "Dual carriageway" as used in the paper).
-2. "primary" road (that could be assimilated to the term "Freeway" as used in the paper).
-3. "secondary" roads (assimilated to "major" roads).
-4. "tertiary" roads (assimilated to "minor" roads).
-5. "other" roads. The other types of roads not included in the previous classifications.
-
-We can map this renaming into the simple features dataset:
-
-```{r Mapping road types of dataset to paper}
-# Create a mapping dictionary (named vector)
-road_type_mapping <- c(
-  "motorway" = "Dual carriageway/Freeway",
-  "motorway_link" = "Dual carriageway/Freeway",
-  "trunk" = "Dual carriageway/Freeway",
-  "trunk_link" = "Dual carriageway/Freeway",
-  "primary" = "Major road",
-  "primary_link" = "Major road",
-  "secondary" = "Minor road",
-  "secondary_link" = "Minor road",
-  "tertiary" = "Minor road",
-  "tertiary_link" = "Minor road",
-  # All others are mapped to "Other"
-  "footway" = "Other",
-  "residential" = "Other",
-  "pedestrian" = "Other",
-  "unclassified" = "Other",
-  "service" = "Other",
-  "track" = "Other",
-  "road" = "Other",
-  "living_street" = "Other",
-  "steps" = "Other",
-  "path" = "Other",
-  "construction" = "Other",
-  "cycleway" = "Other",
-  "proposed" = "Other",
-  "crossing" = "Other",
-  "services" = "Other",
-  "rest_area" = "Other",
-  "yes" = "Other"
-)
-
-# Map the values in the 'type' column
-sf_vietnam_roads <- sf_vietnam_roads %>%
-  mutate(mapped_type = recode(type, !!!road_type_mapping))
-
-# Check unique values of the new column
-unique(sf_vietnam_roads$mapped_type)
-```
-
-```{r}
-# Alternative for re-mapping categorical vars.(Simon)
-vietnam_roads <- vietnam_roads %>%
-  mutate(
-    road_category = case_when(
-      type %in% c("motorway", "motorway_link") ~ "Freeway",
-      type %in% c("trunk", "trunk_link") ~ "Dual Carriageway",
-      type %in% c("secondary") ~ "Major Roads",
-      type %in% c("primary", "primary_link", "secondary_link", "tertiary", "tertiary_link", "residential", "living_street") ~ "Minor Roads",
-      TRUE ~ "Other Roads"
-  )
-)
-```
-
-# 4. Map replication
-
-```{r Map replication: Vietnam's road network in 2015}
-ggplot() + # leave empty, add data to geometry
-  geom_sf(data = sf_vietnam) +
-  geom_sf(data = sf_vietnam_roads, aes(color = mapped_type)) +
-  scale_color_manual(
-    name = "Road Types",
-    values = c(
-      "Dual carriageway/Freeway" = "#213921",
-      "Major road" = "#ff000074",
-      "Minor road" = "#ffa60075",
-      "Other" = "#e1e193"
-    )
-  ) +
-  labs(
-    title = "Map of Vietnam's road network in 2015"
-  )
-```
