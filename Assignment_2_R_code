@@ -1,0 +1,92 @@
+##############################################################################
+# Geospatial DS
+# Assignment 2 (Pt 2)
+# nkm
+##############################################################################
+
+# Libraries 
+library(sf)         
+library(tidyverse)
+library(spData)     
+library(readxl)   
+
+# africa roads: 
+
+# Market Data 
+markets <- read_excel("MktCoords.xlsx")
+head(markets)
+str(markets)
+
+# convert to spatial using WGS 84
+markets <- st_as_sf(markets, coords = c("longitude", "latitude"), crs = "EPSG:4326")
+
+# Price Data 
+prices <- read_excel("PriceMaster4GAMS.xlsx")
+
+# Merge based on market code
+data <- markets %>%
+  left_join(prices, by = "mktcode")
+
+# load market catchment data
+market_catchment <- st_read("MktCatch6Plus5_Dissolve.shp")
+# transform to the same geometry:
+market_catchment <- st_transform(market_catchment, crs = st_crs(data)) 
+
+# plot
+ggplot() +
+  geom_sf(data = market_catchment, fill = "lightblue", alpha = 0.5) +
+  geom_sf(data = data, aes(color = "Market"), size = 2) +
+  theme_minimal()
+
+# We kept getting an error, and it appears it's beacuse there were invalid geometries. 
+market_catchment <- st_make_valid(market_catchment)
+# calculate distance 
+data$dist_catchment <- st_distance(data, market_catchment) %>% apply(1, min)
+
+# Exchange rate data 
+exchange_rates <- read_excel("ExchangeRates.xlsx")
+
+
+#View(exchange_rates)
+# Extract country names from Row 2 (excluding Date column)
+country_names <- as.character(exchange_rates[2, -1])  
+
+# Extract currency names from Row 3 (excluding Date column)
+currency_names <- as.character(exchange_rates[3, -1])  
+
+# Combine country and currency to create unique column names
+col_names <- paste(country_names, currency_names, sep = "_") 
+
+# Add back Date as first column name
+col_names <- c("Date", col_names)
+
+# Rename columns in dataframe
+colnames(exchange_rates) <- col_names
+
+# Remove the first three rows since we extracted them
+exchange_clean <- exchange_rates[-c(1:3), ]
+
+# Final conversion: 
+exchange_long <- exchange_clean %>%
+  pivot_longer(cols = -Date, 
+               names_to = c("Country", "Currency"),
+               names_sep = "_",  
+               values_to = "ExchangeRate")%>%
+  rename(country=Country)
+
+# Extract exchange rates 
+get_exchange_rate <- function(country, date) {
+  rate <- exchange_clean %>%
+    filter(Date == date) %>%
+    select(all_of(country)) %>%
+    pull()
+  
+  return(rate)
+}
+
+# Apply exchange rates 
+data_nn <- data %>%
+  rowwise() %>%
+  mutate(ExchangeRate = get_exchange_rate(country, Date),
+         price_usd = price * ExchangeRate)
+
