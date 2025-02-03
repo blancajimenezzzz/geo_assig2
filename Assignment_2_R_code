@@ -9,84 +9,168 @@ library(sf)
 library(tidyverse)
 library(spData)     
 library(readxl)   
+library(tidyr)
+library(ggplot2)
 
-# africa roads: 
-
+#######################
 # Market Data 
 markets <- read_excel("MktCoords.xlsx")
-head(markets)
-str(markets)
 
 # convert to spatial using WGS 84
 markets <- st_as_sf(markets, coords = c("longitude", "latitude"), crs = "EPSG:4326")
 
+#######################
 # Price Data 
 prices <- read_excel("PriceMaster4GAMS.xlsx")
+# Compute the average price across columns 1 to 46
+prices <- prices %>%
+  rowwise() %>%
+  mutate(price_avg = mean(c_across(`1`:`46`), na.rm = TRUE)) %>%
+  select(mktcode, country, market, crop, price_avg)  # Keep relevant columns
 
 # Merge based on market code
-data <- markets %>%
-  left_join(prices, by = "mktcode")
+# Ensure column names are consistent before merging
+colnames(prices)
+colnames(markets)
 
-# load market catchment data
-market_catchment <- st_read("MktCatch6Plus5_Dissolve.shp")
-# transform to the same geometry:
-market_catchment <- st_transform(market_catchment, crs = st_crs(data)) 
+# Merge datasets on `mktcode` and `market`
+markets <- markets %>%
+  left_join(prices, by = c("mktcode", "market"))
 
-# plot
+#######################
+# Roads dataset
+roads <- st_read("ne_10m_roads.shp")
+
+# filter only for Africa 
+africa_roads <- roads %>%
+  filter(continent == "Africa")%>%
+  select(featurecla, type, length_km, continent)
+
+# Transform to the same CRS as markets
+africa_roads <- st_transform(africa_roads, crs = st_crs(markets))
+
+#######################
+# Coastline data
+coastline <- st_read("ne_10m_coastline.shp")
+
+# Load a polygon of Africa 
+africa_boundary <- world %>% 
+  filter(continent == "Africa") %>%
+  st_transform(crs = st_crs(coastline))
+
+# Keep only coastlines that intersect with Africa
+africa_coastline <- st_intersection(coastline, africa_boundary)
+
+# Transform to the same CRS
+africa_coastline <- st_transform(africa_coastline, crs = st_crs(markets))
+
+#######################
+# Airport data 
+airports <- st_read("ne_10m_airports.shp")
+
+# Load an Africa boundary shapefile from `spData`
+africa_boundary <- world %>% 
+  filter(continent == "Africa") %>%
+  st_transform(crs = st_crs(airports))  # Ensure same CRS
+
+# Keep only airports that are within Africa
+africa_airports <- st_intersection(airports, africa_boundary)
+
+# Keep only relevant columns
+africa_airports <- africa_airports %>%
+  select(featurecla, type, geometry)  # Keep only necessary columns
+
+# Transform to the same CRS as markets
+africa_airports <- st_transform(africa_airports, crs = st_crs(markets))
+
+#######################
+# Distances: 
+
+# Compute distance to the nearest coastline
+dist_matrix_coast <- st_distance(markets, africa_coastline, by_element = FALSE)
+markets <- markets %>%
+  mutate(dist_coast = apply(dist_matrix_coast, 1, min, na.rm = TRUE))  
+
+# Compute distance to the nearest road
+dist_matrix_roads <- st_distance(markets, africa_roads, by_element = FALSE)
+markets <- markets %>%
+  mutate(dist_road = apply(dist_matrix_roads, 1, min, na.rm = TRUE))  
+
+# Compute distance to the nearest airport
+dist_matrix_airports <- st_distance(markets, africa_airports, by_element = FALSE)
+markets <- markets %>%
+  mutate(dist_airport = apply(dist_matrix_airports, 1, min, na.rm = TRUE))  
+
+
+#######################
+# Plot African markets: 
+# Load Africa boundary for context
+africa_boundary <- world %>%
+  filter(continent == "Africa") %>%
+  st_transform(crs = st_crs(markets)) 
+
+# Plot Market Locations
 ggplot() +
-  geom_sf(data = market_catchment, fill = "lightblue", alpha = 0.5) +
-  geom_sf(data = data, aes(color = "Market"), size = 2) +
-  theme_minimal()
+  geom_sf(data = africa_boundary, fill = "gray95", color = "black") +  
+  geom_sf(data = africa_coastline, aes(color = "Coastline"), size = 0.6, alpha = 0.7) +
+  geom_sf(data = africa_roads, aes(color = "Roads"), size = 0.2, alpha = 0.3) +
+  geom_sf(data = africa_airports, aes(color = "Airports"), size = 2, shape = 17, alpha = 0.8) +
+  geom_sf(data = markets, aes(color = "Markets"), size = 2) +  
+  labs(title = "Market Locations and Infrastructure Across Africa",
+       x = "Longitude", y = "Latitude",
+       color = "Infrastructure") +
+  scale_color_manual(values = c("Markets" = "maroon",
+                                "Coastline" = "blue",
+                                "Roads" = "gray40",
+                                "Airports" = "purple")) +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(), 
+    axis.text = element_blank(), 
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14)
+  )
 
-# We kept getting an error, and it appears it's beacuse there were invalid geometries. 
-market_catchment <- st_make_valid(market_catchment)
-# calculate distance 
-data$dist_catchment <- st_distance(data, market_catchment) %>% apply(1, min)
+#######################
+# Scatter plots: 
+markets <- markets %>% 
+  filter(!is.na(price_avg) & price_avg > 0) %>%
+  mutate(
+    log_dist_coast = log1p(dist_coast), 
+    log_dist_road = log1p(dist_road), 
+    log_dist_airport = log1p(dist_airport),
+    log_price = log1p(price_avg)  
+  )
 
-# Exchange rate data 
-exchange_rates <- read_excel("ExchangeRates.xlsx")
+########
+# Scatter plot of Price vs Distance to Coast by Crop
+ggplot(markets, aes(x = log_dist_coast, y = price_avg, color = crop)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~crop, scales = "free") +
+  labs(title = "Average Price vs Log Distance to Coast by Crop",
+       x = "Log Distance to Coast (meters)",
+       y = "Average Price") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
 
+########
+# Scatter plot of Price vs Distance to Nearest Road by Crop
+ggplot(markets, aes(x = log_dist_road, y = price_avg, color = crop)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~crop, scales = "free") +
+  labs(title = "Average Price vs Log Distance to Road by Crop",
+       x = "Log Distance to Nearest Road (meters)",
+       y = "Average Price") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
 
-#View(exchange_rates)
-# Extract country names from Row 2 (excluding Date column)
-country_names <- as.character(exchange_rates[2, -1])  
-
-# Extract currency names from Row 3 (excluding Date column)
-currency_names <- as.character(exchange_rates[3, -1])  
-
-# Combine country and currency to create unique column names
-col_names <- paste(country_names, currency_names, sep = "_") 
-
-# Add back Date as first column name
-col_names <- c("Date", col_names)
-
-# Rename columns in dataframe
-colnames(exchange_rates) <- col_names
-
-# Remove the first three rows since we extracted them
-exchange_clean <- exchange_rates[-c(1:3), ]
-
-# Final conversion: 
-exchange_long <- exchange_clean %>%
-  pivot_longer(cols = -Date, 
-               names_to = c("Country", "Currency"),
-               names_sep = "_",  
-               values_to = "ExchangeRate")%>%
-  rename(country=Country)
-
-# Extract exchange rates 
-get_exchange_rate <- function(country, date) {
-  rate <- exchange_clean %>%
-    filter(Date == date) %>%
-    select(all_of(country)) %>%
-    pull()
-  
-  return(rate)
-}
-
-# Apply exchange rates 
-data_nn <- data %>%
-  rowwise() %>%
-  mutate(ExchangeRate = get_exchange_rate(country, Date),
-         price_usd = price * ExchangeRate)
-
+########
+# Scatter plot of Price vs Distance to Nearest Airport by Crop
+ggplot(markets, aes(x = log_dist_airport, y = price_avg, color = crop)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~crop, scales = "free") +
+  labs(title = "Average Price vs Log Distance to Airport by Crop",
+       x = "Log Distance to Nearest Airport (meters)",
+       y = "Average Price") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
