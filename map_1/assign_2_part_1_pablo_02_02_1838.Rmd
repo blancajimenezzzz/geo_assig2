@@ -26,7 +26,7 @@ Loading the world dataset:
 
 ```{r}
 gmsf_world <- world
-head(gmsf_world)
+View(gmsf_world)
 ```
 
 We keep only the variables that interest us for this task:
@@ -52,7 +52,7 @@ Source of the population data: https://www.naturalearthdata.com/downloads/10m-cu
 ```{r}
 path_population_shp <- here("geo_assig2/map_1/populated_places", "ne_10m_populated_places.shp")
 gmsf_population <- st_read(path_population_shp)
-head(gmsf_population)
+View(gmsf_population)
 colnames(gmsf_population)
 ```
 
@@ -61,7 +61,7 @@ Again, we only select those variables that may interest us:
 ```{r}
 gmsf_population_sel <- gmsf_population %>% 
   select(FEATURECLA, NAME, NAMEASCII, SOV0NAME, ADM0NAME, ISO_A2, POP_MAX, POP_MIN, geometry)
-head(gmsf_population_sel)
+View(gmsf_population_sel)
 rm(gmsf_population)
 ```
 
@@ -72,7 +72,7 @@ Source of the population by country data: https://www.naturalearthdata.com/downl
 ```{r}
 path_population_countries_shp <- here("geo_assig2/map_1/population_by_countries", "ne_10m_admin_0_countries.shp")
 gmsf_population_by_countries <- st_read(path_population_countries_shp)
-head(gmsf_population_by_countries)
+View(gmsf_population_by_countries)
 colnames(gmsf_population_by_countries)
 ```
 
@@ -90,6 +90,29 @@ head(rows_with_na)
 
 There are no missing values for the population field (an improvement with respect to the `world` dataset).
 
+We will make another version of this dataframe with some of the continent data rearranged:
+* We will drop the continent of Antarctica, as it adds little value to the histograms.
+* We will group the countries in the group "Seven seas (open ocean)" into their respective continents.
+
+```{r}
+gmsf_population_by_countries_sel_rearranged <- gmsf_population_by_countries_sel %>%
+    mutate(CONTINENT = case_when(
+      ADMIN == "French Southern and Antarctic Lands" ~ "Antarctica", # closest to Antarctica and has 140 citizens
+      ADMIN == 'Seychelles' ~ 'Africa',
+      ADMIN == 'Heard Island and McDonald Islands' ~ "Antarctica", # closest to Antarctica and has 0 citizens
+      ADMIN == 'Saint Helena' ~ 'Africa',
+      ADMIN == 'Mauritius' ~ 'Africa',
+      ADMIN == 'British Indian Ocean Territory'  ~ 'Asia',
+      ADMIN == 'Maldives' ~ 'Asia',
+      ADMIN == 'South Georgia and the Islands' ~ 'South America',
+      ADMIN == 'Clipperton Island' ~ 'North America', # as Central America is included in North America in this dataset
+      TRUE ~ CONTINENT
+    )) %>%
+  filter(CONTINENT != "Antarctica")
+
+View(gmsf_population_by_countries_sel_rearranged)
+```
+
 ## 1.4. Ports data
 
 Source of the ports data: https://www.naturalearthdata.com/downloads/10m-cultural-vectors/ports/
@@ -97,7 +120,7 @@ Source of the ports data: https://www.naturalearthdata.com/downloads/10m-cultura
 ```{r}
 path_ports_shp <- here("geo_assig2/map_1/ports", "ne_10m_ports.shp")
 gmsf_ports <- st_read(path_ports_shp)
-head(gmsf_ports)
+View(gmsf_ports)
 colnames(gmsf_ports)
 ```
 
@@ -105,7 +128,7 @@ Select only the values that may be useful:
 
 ```{r}
 gmsf_ports_sel <- gmsf_ports %>% select(featurecla, name, ne_id, geometry)
-head(gmsf_ports_sel)
+View(gmsf_ports_sel)
 rm(gmsf_ports)
 ```
 
@@ -116,7 +139,7 @@ Source of the airports data: https://www.naturalearthdata.com/downloads/10m-cult
 ```{r}
 path_airports_shp <- here("geo_assig2/map_1/airports", "ne_10m_airports.shp")
 gmsf_airports <- st_read(path_airports_shp)
-head(gmsf_airports)
+View(gmsf_airports)
 colnames(gmsf_airports)
 ```
 
@@ -142,30 +165,81 @@ ggplot(gmsf_population_by_countries_sel) +
                        name = "Population (in Millions)") +
   labs(title = "World Population by Country",
        subtitle = "Population estimates across countries",
-       caption = "Data Source: Natural Earth (2025)",
-       )
+       caption = "Data Source: Natural Earth (2025)")
 ```
 
+We scaled the data to millions for a more clear legend.
 Note, however, that the population estimates correspond to different years, so the current situation may differ slightly.
 
 ## 2.2. Histogram of country population distribution by continent
 
+For this, we used the rearranged population by country, to avoid having a histogram with just a 6-7 values and one for Antarctica alone.
 ```{r}
-ggplot(gmsf_population_by_countries_sel, aes(POP_EST)) +
-  geom_histogram(bins = 50, fill = "purple", color = "white") +
-  facet_wrap(~ CONTINENT, scales = "free_x") + # We use facet_wrap to create a figure with several histograms grouped by continent
-  labs(title = "Population Histogram by Continent (different population scale)",
-       x = "Population Estimate",
-       y = "Frequency")
+gmsf_population_by_countries_sel_rearranged <- gmsf_population_by_countries_sel_rearranged %>%
+  mutate(POP_EST_Millions = POP_EST / 1e6)
+
+ggplot(gmsf_population_by_countries_sel_rearranged, aes(POP_EST_Millions, fill = CONTINENT)) +
+  geom_histogram(bins = 20, color = "white") +
+  facet_wrap(~ CONTINENT, scales = "free_x") +
+  scale_fill_manual(values = c(
+    "Africa" = "darkgreen",
+    "Asia" = "darkblue",
+    "Europe" = "darkred",
+    "North America" = "darkorange",
+    "South America" = "darkviolet",
+    "Oceania" = "darkcyan"
+  )) +
+  labs(
+    title = "Population by Continent (different scales)",
+    x = "Population Estimate (in Millions)",
+    y = "Frequency"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 8),
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    legend.position = "none"
+  )
 ```
 
+We also plot it in log scale, to make it more readable.
 ```{r}
-ggplot(gmsf_population_by_countries_sel, aes(POP_EST)) +
-  geom_histogram(bins = 50, fill = "purple", color = "white") +
-  facet_wrap(~ CONTINENT, scales = "fixed") + # We use facet_wrap to create a figure with several histograms grouped by continent
-  labs(title = "Population Histogram by Continent (same population scale)",
-       x = "Population Estimate",
-       y = "Frequency")
+ggplot(gmsf_population_by_countries_sel_rearranged, aes(POP_EST, fill = CONTINENT)) +
+  geom_histogram(bins = 20, color = "white") +
+  facet_wrap(~ CONTINENT, scales = "free_x") +
+  scale_fill_manual(values = c(
+    "Africa" = "darkgreen",
+    "Asia" = "darkblue",
+    "Europe" = "darkred",
+    "North America" = "darkorange",
+    "South America" = "darkviolet",
+    "Oceania" = "darkcyan"
+  )) +
+  scale_x_log10(
+    breaks = c(100, 1000, 10000, 100000, 1000000, 10000000, 10000000, 1000000000),
+    labels = c('100', '1k', '10k', '100k', '1M', '10M', '100M', '1B')
+  ) +
+  labs(
+    title = "Population Histogram by Continent (Log Scale)",
+    x = "Log of Population Estimate",
+    y = "Frequency"
+  ) +
+  scale_y_continuous(
+    breaks = seq(0, 13, by = 3)
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 8),
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1) 
+  )
 ```
 
 ## 2.3. Histogram of (country-level) average distances between locations and ports or airports by continent
@@ -217,6 +291,7 @@ Calculations for airports:
 
 ```{r}
 airports_distance <- st_distance(gmsf_population_sel, gmsf_airports_slice, by_element = F)
+View(airports_distance)
 ```
 
 ### Step 2: Keep the shortest distance of each location with each type of infrastructure
@@ -290,7 +365,7 @@ avg_country_dist_port <- st_drop_geometry(avg_country_dist_port)
 # Second, we do a left join on the distance data frames, in order to
 # have the polygons of the world data frame
 gmsf_avg_distances <- left_join(
-  x = gmsf_population_by_countries_sel,
+  x = gmsf_population_by_countries_sel_rearranged,
   y = avg_country_dist_airport,
   by = "ISO_A2")
 gmsf_avg_distances <- left_join(
@@ -308,21 +383,55 @@ head(gmsf_avg_distances)
 Note that not all locations in the world are included in the dataset that has been used, so the histograms may not accurately represent reality.
 
 ```{r}
-ggplot(gmsf_avg_distances, aes(avg_dist_airport_km)) +
-  geom_histogram(bins = 50, fill = "red", color = "white", na.rm = T) +
-  facet_wrap(~ CONTINENT, scales = "fixed") + # We use facet_wrap to create a figure with several histograms grouped by continent
-  labs(title = "Histogram of Country-level Average Distances to Closest Airport by Continent",
-       x = "Average Distance (km)",
-       y = "Frequency")
+ggplot(gmsf_avg_distances, aes(x = avg_dist_airport_km, fill = CONTINENT)) +
+  geom_histogram(bins = 30, color = "white", na.rm = TRUE) +
+  facet_wrap(~ CONTINENT, scales = "free_x") +
+  scale_fill_manual(values = c(
+    "Africa" = "darkgreen",
+    "Asia" = "darkblue",
+    "Europe" = "darkred",
+    "North America" = "darkorange",
+    "South America" = "darkviolet",
+    "Oceania" = "darkcyan"
+  )) +
+  labs(
+    title = "Country-level Average Distances to Closest AIRPORT",
+    x = "Average Distance (km)",
+    y = "Frequency"
+  ) +
+    theme(
+    strip.text = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 8),
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    legend.position = "none"
+  )
 ```
 
 ```{r}
-ggplot(gmsf_avg_distances, aes(avg_dist_port_km)) +
-  geom_histogram(bins = 50, fill = "blue", color = "white", na.rm = T) +
+ggplot(gmsf_avg_distances, aes(avg_dist_port_km, fill = CONTINENT)) +
+  geom_histogram(bins = 30, color = "white", na.rm = TRUE) +
   facet_wrap(~ CONTINENT, scales = "fixed") + # We use facet_wrap to create a figure with several histograms grouped by continent
-  labs(title = "Histogram of Country-level Average Distances to Closest Port by Continent",
+  labs(title = "Country-level Average Distances to Closest PORT",
        x = "Average Distance (km)",
-       y = "Frequency")
+       y = "Frequency") +
+  scale_fill_manual(values = c(
+    "Africa" = "darkgreen",
+    "Asia" = "darkblue",
+    "Europe" = "darkred",
+    "North America" = "darkorange",
+    "South America" = "darkviolet",
+    "Oceania" = "darkcyan"
+  )) +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 8),
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    legend.position = "none"
+  )
 ```
 
 ### Additional: maps of country-level average distances to the closest ports and airports
@@ -340,11 +449,10 @@ ggplot(gmsf_avg_distances) +
 
 ```{r}
 ggplot(gmsf_avg_distances) +
-  geom_sf(aes(fill=avg_dist_port_km)) +  # Fill countries by avg distances
-  scale_fill_distiller(palette = "Spectral",  # Setting color legend
+  geom_sf(aes(fill=avg_dist_port_km)) +  
+  scale_fill_distiller(palette = "Spectral",  
                        name = "Average Distance to Port") +
   labs(title = "Average Distance to Closest Port",
-       subtitle = "Country-level average distances to the closest port, in km (using the arithmetic mean for populated locations)",
-       caption = "Data Source: Natural Earth (2025)",
-       )
+       subtitle = "Country-level average distances to the closest port, in km\n(using the arithmetic mean for populated locations)",
+       caption = "Data Source: Natural Earth (2025)")
 ```
