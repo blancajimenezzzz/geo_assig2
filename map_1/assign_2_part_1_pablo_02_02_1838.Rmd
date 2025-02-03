@@ -179,7 +179,7 @@ gmsf_population_by_countries_sel_rearranged <- gmsf_population_by_countries_sel_
   mutate(POP_EST_Millions = POP_EST / 1e6)
 
 ggplot(gmsf_population_by_countries_sel_rearranged, aes(POP_EST_Millions, fill = CONTINENT)) +
-  geom_histogram(bins = 20, color = "white") +
+  geom_histogram(bins = 30, color = "white") +
   facet_wrap(~ CONTINENT, scales = "free_x") +
   scale_fill_manual(values = c(
     "Africa" = "darkgreen",
@@ -208,7 +208,7 @@ ggplot(gmsf_population_by_countries_sel_rearranged, aes(POP_EST_Millions, fill =
 We also plot it in log scale, to make it more readable.
 ```{r}
 ggplot(gmsf_population_by_countries_sel_rearranged, aes(POP_EST, fill = CONTINENT)) +
-  geom_histogram(bins = 20, color = "white") +
+  geom_histogram(bins = 30, color = "white") +
   facet_wrap(~ CONTINENT, scales = "free_x") +
   scale_fill_manual(values = c(
     "Africa" = "darkgreen",
@@ -398,7 +398,8 @@ ggplot(gmsf_avg_distances, aes(x = avg_dist_airport_km, fill = CONTINENT)) +
     title = "Country-level Average Distances to Closest AIRPORT",
     x = "Average Distance (km)",
     y = "Frequency"
-  ) +
+  ) + 
+  theme_minimal() +
     theme(
     strip.text = element_text(size = 12, face = "bold"),
     axis.title = element_text(size = 10),
@@ -412,7 +413,7 @@ ggplot(gmsf_avg_distances, aes(x = avg_dist_airport_km, fill = CONTINENT)) +
 ```{r}
 ggplot(gmsf_avg_distances, aes(avg_dist_port_km, fill = CONTINENT)) +
   geom_histogram(bins = 30, color = "white", na.rm = TRUE) +
-  facet_wrap(~ CONTINENT, scales = "fixed") + # We use facet_wrap to create a figure with several histograms grouped by continent
+  facet_wrap(~ CONTINENT, scales = "fixed") +
   labs(title = "Country-level Average Distances to Closest PORT",
        x = "Average Distance (km)",
        y = "Frequency") +
@@ -424,6 +425,7 @@ ggplot(gmsf_avg_distances, aes(avg_dist_port_km, fill = CONTINENT)) +
     "South America" = "darkviolet",
     "Oceania" = "darkcyan"
   )) +
+  theme_minimal() +
   theme(
     strip.text = element_text(size = 12, face = "bold"),
     axis.title = element_text(size = 10),
